@@ -1,0 +1,67 @@
+#!/bin/bash
+BINPATH=`cd "$(dirname "$0")";pwd`
+#DATAPATH=${BINPATH}"/data"
+DATAPATH="/tmp/.box_info.yml"
+LOCAL_IP=$(hostname -i)
+IP_PREFIX=$(cut -d . -f1-3 <<<$LOCAL_IP)
+GATE_WAY="$IP_PREFIX.1"
+BOX_IP=$LOCAL_IP
+BOX_NIC=""
+
+function grab_ip()
+{
+    local ip=$(awk '/box_ip/{print $2}' $DATAPATH  2>/dev/null)
+    if [[ -n $ip ]];then
+      echo "$ip"
+      return 0
+    fi
+    for ((meta=230;meta>100;meta--))
+    do
+      new_ip="$IP_PREFIX.$meta" 
+      ping -w 2 $new_ip &>/dev/null 
+      if [[ $? -ne  0 ]];then
+          echo  "$new_ip"
+          echo  "box_ip: $new_ip" >$DATAPATH
+          return 0
+          break
+      fi
+    done
+    return 1
+}
+
+function get_nic()
+{
+ local nic=$(ip route get 10.212.0.231|sed 's/.*dev\s\(.*\).*src.*/\1/;tx;d;:x'|sed 's/ //g' 2>/dev/null)
+ local box_nic="$nic:0"
+ [[ -n $nic ]] && echo  "$box_nic" || return 1
+ echo  "box_nic: $box_nic" >>$DATAPATH
+}
+
+function get_gateway()
+{
+ local gateway=$(ip route get 10.212.0.231|sed 's/.*via\s\(.*\).*dev.*/\1/;tx;d;:x' 2>/dev/null)
+ [[ -n $gateway ]] && echo "$gateway" || return 1
+}
+
+function add_route()
+{
+ if ! grep -q "src $BOX_IP" <(ip route) ;then 
+ route add -net 10.0.0.0 netmask 255.0.0.0 gw $GATE_WAY dev $BOX_NIC 2>/dev/null || return 1
+#route del -net 10.0.0.0 netmask 255.0.0.0  gw 10.48.193.1 dev eth1:0
+ fi
+}
+function setup_ip_alias()
+{
+ if ! grep -q "$BOX_NIC" <(ifconfig);then 
+ ifconfig $BOX_NIC  $BOX_IP netmask 255.255.255.0  up 2>/dev/null || return 1
+#ifconfig $BOX_NIC  $BOX_IP netmask 255.255.255.0  down 2>/dev/null || return 1
+ fi
+}
+
+BOX_IP=$(grab_ip)
+BOX_NIC=$(get_nic)
+GATE_WAY=$(get_gateway)
+setup_ip_alias
+add_route
+
+echo "$BOX_IP"
